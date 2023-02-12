@@ -1,7 +1,6 @@
 import logging
 from logging.handlers import RotatingFileHandler
 import telegram
-from telegram import Bot
 import os
 import sys
 import time
@@ -11,16 +10,14 @@ from exceptions import ParseStatusError
 import json
 import requests
 
-from dotenv import load_dotenv 
+from dotenv import load_dotenv
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv()
 
 PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-
-
-
 RETRY_PERIOD = 600
 ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
 HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
@@ -33,20 +30,20 @@ HOMEWORK_VERDICTS = {
 }
 
 logging.basicConfig(
-        level=logging.DEBUG,
-        format='%(asctime)s [%(levelname)s] %(message)s',
-        stream=sys.stdout
+    level=logging.DEBUG,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    stream=sys.stdout
 
-    )
+)
 
 logger = logging.getLogger(__name__)
 
 logger.setLevel(logging.INFO)
 
 handler = RotatingFileHandler(
-    'my_logger.log', 
-    maxBytes=50000000, 
-    backupCount=5, 
+    'my_logger.log',
+    maxBytes=50000000,
+    backupCount=5,
     encoding='utf-8'
 )
 logger.addHandler(handler)
@@ -57,24 +54,36 @@ formatter = logging.Formatter(
 
 handler.setFormatter(formatter)
 
-def send_message(bot: telegram.Bot, message: str) -> None:
-    """Отправляет сообщение в Telegram чат, 
-    определяемый переменной окружения TELEGRAM_CHAT_ID."""
-    bot = telegram.Bot(token=TELEGRAM_TOKEN)
+
+def check_tokens() -> bool:
+    """Проверяет доступность переменных окружения."""
+    list_env = [
+        PRACTICUM_TOKEN,
+        TELEGRAM_TOKEN,
+        TELEGRAM_CHAT_ID
+    ]
+    return all(list_env)
+
+
+def send_message(bot, message):
+    """Отправляет сообщение в Telegram чат."""
     try:
-        logging.DEBUG(f'Бот отправил сообщение {message}')
         bot.send_message(TELEGRAM_CHAT_ID, message)
-    except Exception as error:
-        logging.error(error)
+    except telegram.error.TelegramError as error:
+        logging.error(f'Ошибка отправки сообщения в телеграм {error}')
+    else:
+        logging.debug(f'Сообщение отправлено: {message}')
+
 
 def get_api_answer(timestamp: int) -> Union[dict, str]:
-    """Делает запрос к единственному эндпоинту API-сервиса.
+    """
+    Делает запрос к единственному эндпоинту API-сервиса.
     Осуществляет запрос к эндпоинту API-сервиса. В качестве параметра
     функция получает временную метку. В случае успешного запроса должна
     вернуть ответ API, преобразовав его из формата JSON к типам данных Python.
     """
     timestamp = timestamp or int(time.time())
-    params = {'from_date': timestamp}
+    params = {'from_date': 0}
     try:
         logging.info(f'Отправка запроса на {ENDPOINT} с параметрами {params}')
         response_from_api = requests.get(ENDPOINT,
@@ -124,8 +133,7 @@ def check_response(response: dict) -> list:
 
 
 def parse_status(homework: dict) -> str:
-    """Извлекает из информации о конкретной 
-    домашней работе статус этой работы."""
+    """Извлекает из статус домашней работы."""
     if not homework.get('homework_name'):
         homework_name = 'NoName'
         logging.warning('Отсутствует имя домашней работы.')
@@ -147,15 +155,6 @@ def parse_status(homework: dict) -> str:
         raise KeyError(message)
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
-def check_tokens() -> bool:
-    """Проверяет доступность переменных окружения,
-    которые необходимы для работы программы."""
-    list_env = [
-        PRACTICUM_TOKEN,
-        TELEGRAM_TOKEN,
-        TELEGRAM_CHAT_ID
-    ]
-    return all(list_env)
 
 def main():
     """Основная логика работы программы."""
@@ -164,9 +163,8 @@ def main():
     }
     if not check_tokens():
         logging.critical(
-            f'''Отсутствует обязательная переменная окружения. 
-            Работа программы остановлена.'''
-        )
+            "Отсутствует обязательная переменная окружения."
+            "Работа программы остановлена.")
         exit()
 
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
