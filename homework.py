@@ -1,14 +1,14 @@
 import logging
 from logging.handlers import RotatingFileHandler
 import telegram
+import requests
 import os
 import sys
 import time
 from http import HTTPStatus
 from typing import Union
-from exceptions import ParseStatusError
+import exceptions
 import json
-import requests
 
 from dotenv import load_dotenv
 
@@ -57,12 +57,12 @@ handler.setFormatter(formatter)
 
 def check_tokens() -> bool:
     """Проверяет доступность переменных окружения."""
-    list_env = [
+    environment_variables = [
         PRACTICUM_TOKEN,
         TELEGRAM_TOKEN,
         TELEGRAM_CHAT_ID
     ]
-    return all(list_env)
+    return all(environment_variables)
 
 
 def send_message(bot, message):
@@ -83,27 +83,28 @@ def get_api_answer(timestamp: int) -> Union[dict, str]:
     вернуть ответ API, преобразовав его из формата JSON к типам данных Python.
     """
     timestamp = timestamp or int(time.time())
-    params = {'from_date': 0}
+    params = {'from_date': timestamp}
     try:
         logging.info(f'Отправка запроса на {ENDPOINT} с параметрами {params}')
         response_from_api = requests.get(ENDPOINT,
                                          headers=HEADERS,
                                          params=params)
-    except Exception as error:
-        logger.error(f'Ошибка запроса к API адресу: {error}')
+    except requests.RequestException as error:
+        message = f'Ошибка запроса к API адресу: {error}'
+        logging.error(message)
+        raise exceptions.EndpointIsUnavailable
     if response_from_api.status_code != HTTPStatus.OK:
-        logger.error(
-            f'Ошибка ответа от API адреса: {response_from_api.status_code}'
-        )
-        raise Exception(
-            f'Ошибка ответа от API адреса: {response_from_api.status_code}'
-        )
+        message = (f'''
+        Ошибка ответа от API адреса: {response_from_api.status_code}
+        ''')
+        logger.error(message)
+        raise exceptions.HttpStatusCodeError
     try:
         response = response_from_api.json()
     except json.JSONDecodeError as error:
-        logger.error(
-            f'Ответ от API адреса не преобразован в json(): {error}.'
-        )
+        message = f'Ответ от API адреса не преобразован в json(): {error}.'
+        logger.error(message)
+        raise exceptions.JsonApiError
     return response
 
 
@@ -112,29 +113,29 @@ def check_response(response: dict) -> list:
     if not response:
         message = 'В словаре нет данных.'
         logging.error(message)
-        raise KeyError(message)
+        raise exceptions.EmptyResponseError
 
     if not isinstance(response, dict):
         message = 'В словаре некорректный тип данных.'
         logging.error(message)
-        raise TypeError(message)
+        raise TypeError
 
     if 'homeworks' not in response:
         message = 'В словаре отсутствуют ожидаемые ключи.'
         logging.error(message)
-        raise KeyError(message)
-
-    if not isinstance(response.get('homeworks'), list):
+        raise exceptions.KeyResponseError
+    homework = response['homeworks']
+    if not isinstance(homework, list):
         message = 'Формат ответа не соответствует искомому.'
         logging.error(message)
-        raise TypeError(message)
+        raise TypeError
 
-    return response['homeworks']
+    return homework
 
 
 def parse_status(homework: dict) -> str:
     """Извлекает из статус домашней работы."""
-    if not homework.get('homework_name'):
+    if 'homework_name' not in homework:
         homework_name = 'NoName'
         logging.warning('Отсутствует имя домашней работы.')
         raise KeyError('В ответе API отсутствует '
@@ -146,13 +147,12 @@ def parse_status(homework: dict) -> str:
     if 'status' not in homework:
         message = 'Отсутстует ключ homework_status.'
         logging.error(message)
-        raise ParseStatusError(message)
-
-    verdict = HOMEWORK_VERDICTS.get(homework_status)
+        raise exceptions.ParseStatusError(message)
     if homework_status not in HOMEWORK_VERDICTS:
         message = 'Неизвестный статус домашней работы'
         logging.error(message)
         raise KeyError(message)
+    verdict = HOMEWORK_VERDICTS[homework_status]
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
@@ -163,8 +163,8 @@ def main():
     }
     if not check_tokens():
         logging.critical(
-            "Отсутствует обязательная переменная окружения."
-            "Работа программы остановлена.")
+            'Отсутствует обязательная переменная окружения.'
+            'Работа программы остановлена.')
         exit()
 
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
@@ -174,7 +174,7 @@ def main():
         try:
             response = get_api_answer(timestamp)
             homeworks = check_response(response)
-            if len(homeworks) == 0:
+            if not homeworks:
                 logging.debug('Ответ API пуст: нет домашних работ.')
                 break
             for homework in homeworks:
